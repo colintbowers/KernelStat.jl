@@ -50,7 +50,6 @@ const validBandwidthMethodString = ["whiteNoise", "bartlett", "P2003"] #Vector o
 
 
 
-
 #----------------------------------------------------------
 #TYPE
 #	KernelFunction (Abstract type nesting all other kernel function types)
