@@ -14,6 +14,11 @@ It is worthing noting that kernel-function based statistics is a big topic, and 
 
 ## How to use KernelStat
 
+#### Installation
+
+This package is not yet registered, so you will not be able to get it using `Pkg.add("KernelStat")`. If you want to try it out use `Pkg.clone("https://github.com/colintbowers/KernelStat.jl")` from the Julia REPL. This should download it and install it in your `.julia` folder. Then you can load the package into the current julia session with `using KernelStat`.
+
+
 #### Kernel function types and evaluation
 
 As in the Julia Distance package, each kernel function is its own type, and all kernel function types are a subset of the abstract type `KernelFunction`. A list of kernel function types and their fields follows. Kernel functions defined on the interval [-1, 1] include:
