@@ -7,7 +7,8 @@ A module for the [Julia](http://julialang.org/) language for [kernel-function ba
 
 This module allows Julia users to specify and evaluate a range of different kernel functions. It also includes functionality for estimating bandwidths for use with various staistical procedures, including, but not limited to, estimation of optimal block lengths for dependent bootstraps.
 
-The module is implemented entirely in Julia and draws some inspiration from the [Distance](https://github.com/JuliaStats/Distance.jl) package. Specifically, each kernel function or bandwidth estimation method is its own type and are evaluated via the functions `evaluate` and `bandwidth` respectively, exploiting multiple dispatch.
+
+The module is implemented entirely in Julia and draws some inspiration from the [Distance](https://github.com/JuliaStats/Distance.jl) package. Specifically, each kernel function or bandwidth estimation method is its own type and are evaluated via the functions `evaluate` and `bandwidth` respectively, exploiting multiple dispatch. This is in contrast to the other kernel statistics packages for Julia, which typically do not employ this model for structuring modules.
 
 It is worthing noting that kernel-function based statistics is a big topic, and this module is currently quite small. In fact, I only wrote this module to support a more comprehensive module for dependent bootstrapping, and so the functionality implemented thus far is all that was needed to support the package [DependentBootstrap](https://github.com/colintbowers/DependentBootstrap.jl).
 
