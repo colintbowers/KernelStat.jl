@@ -19,8 +19,8 @@ import 	Base.string,
 
 #Specify the variables/functions to export (use export FunctionName1, FunctionName2, etc)
 export	evaluate, #Evaluate kernel function at given input
-		nonzeroDomain, #Function that returns a UnitRange indicating the range over which kernel output is non-zero
-		paramDomain, #Function that returns a UnitRange indicating the feasible domain kernel parameters
+		nonzerodomain, #Function that returns a UnitRange indicating the range over which kernel output is non-zero
+		paramdomain, #Function that returns a UnitRange indicating the feasible domain kernel parameters
 		KernelFunction, #Abstract type that nests all kernel function types
 		KernelUniform, #Kernel function type
 		KernelTriangular, #Kernel function type
@@ -44,51 +44,25 @@ export	evaluate, #Evaluate kernel function at given input
 #----------------------------------------------------------
 #SET CONSTANTS FOR MODULE
 #----------------------------------------------------------
-const validBandwidthMethodString = ["whiteNoise", "bartlett", "P2003"] #Vector of valid string representations for bandwidth methods
-
+#None currently needed
 
 
 
 
 #----------------------------------------------------------
 #TYPE
-#	KernelFunction (Abstract type nesting all other kernel function types)
-#	KernelUniform
-#	KernelTriangular
-#	KernelEpanechnikov
-#	KernelQuartic
-#	KernelGaussian
-#	KernelPR1995FlatTop
-#	KernelPP2002Trap
-#	KernelPP2002Smooth
-#FIELDS
-#	Fields store parameteres necessary to calculate each kernel function.
-#BASIC METHODS (more methods below)
-#	string(kF::KernelFunction)
-#	copy(kF::KernelFunction)
-#	show(kF::KernelFunction)
-#METHODS DEFINED SEPARETELY BELOW
-#	evaluate: Used to evaluate kernel functions
-#	nonzeroDomain: Returns the range over which the kernel function outputs non-zero values
-#	paramDomain: Returns the valid range of values that can be taken by the specified parameter of the kernel
+#	abstract super-type and one type for each kernel function
 #PURPOSE
-#	These types are used to define different kernel functions, all of which can be called via the evaluate function.
-#NOTES
-#	Many kernel functions will have no fields, as they require no input parameters
+#	These types are used to define different kernel functions, parameterised by the fields of the type, and all of which can be called via the evaluate function.
 #----------------------------------------------------------
-#------- ABSTRACT TYPE DEFINITIONS ------
-#Abstract type to nest all other kernel function types
+#Abstract super type
 abstract KernelFunction
 #------- TYPE DEFINITIONS ---------------
 #Common kernel functions defined on the interval [-1, 1]
-type KernelUniform <: KernelFunction
-end
-type KernelTriangular <: KernelFunction
-end
-type KernelEpanechnikov <: KernelFunction
-end
-type KernelQuartic <: KernelFunction
-end
+type KernelUniform <: KernelFunction; end
+type KernelTriangular <: KernelFunction; end
+type KernelEpanechnikov <: KernelFunction; end
+type KernelQuartic <: KernelFunction; end
 #Common kernel functions defined on the interval [-Inf, Inf]
 type KernelGaussian <: KernelFunction
 	p1::Float64 #This is the scaling term, almost always set to 1 / sqrt(2*pi). We parameterize it for efficiency of computation on vector-input evaluations
@@ -107,8 +81,7 @@ type KernelPR1993FlatTop <: KernelFunction
 end
 KernelPR1993FlatTop() = KernelPR1993FlatTop(0.5, 1.0) #A popular specification of this kernel function
 #Politis, Romano (2003) "Adaptive Bandwidth Choice" [NOTE, equivalent to KernelPR1993FlatTop with m = 1/2, and M = 1]
-type KernelP2003FlatTop <: KernelFunction
-end
+type KernelP2003FlatTop <: KernelFunction; end
 #Paparoditis, Politis (2002) "The tapered block bootstrap for general statistics from stationary sequences"
 type KernelPP2002Trap <: KernelFunction
 	p1::Float64
@@ -133,7 +106,7 @@ string(kT::KernelPR1993FlatTop) = "PR1993FlatTop"
 string(kT::KernelP2003FlatTop) = "P2003FlatTop"
 string(kT::KernelPP2002Trap) = "PP2002Trap"
 string(kT::KernelPP2002Smooth) = "PP2002Smooth"
-#copy methods
+#copy, deepcopy methods
 copy(kT::KernelUniform) = KernelUniform()
 copy(kT::KernelTriangular) = KernelTriangular()
 copy(kT::KernelEpanechnikov) = KernelEpanechnikov()
@@ -143,6 +116,15 @@ copy(kT::KernelPR1993FlatTop) = KernelPR1993FlatTop(copy(kT.m), copy(kT.M))
 copy(kT::KernelP2003FlatTop) = KernelP2003FlatTop()
 copy(kT::KernelPP2002Trap) = KernelPP2002Trap(copy(kT.p1))
 copy(kT::KernelPP2002Smooth) = KernelPP2002Smooth(copy(kT.p1))
+deepcopy(kT::KernelUniform) = KernelUniform()
+deepcopy(kT::KernelTriangular) = KernelTriangular()
+deepcopy(kT::KernelEpanechnikov) = KernelEpanechnikov()
+deepcopy(kT::KernelQuartic) = KernelQuartic()
+deepcopy(kT::KernelGaussian) = KernalGaussian(deepcopy(kT.p1))
+deepcopy(kT::KernelPR1993FlatTop) = KernelPR1993FlatTop(deepcopy(kT.m), deepcopy(kT.M))
+deepcopy(kT::KernelP2003FlatTop) = KernelP2003FlatTop()
+deepcopy(kT::KernelPP2002Trap) = KernelPP2002Trap(deepcopy(kT.p1))
+deepcopy(kT::KernelPP2002Smooth) = KernelPP2002Smooth(deepcopy(kT.p1))
 #show method for parameter-less kernel functions
 show{T<:Union(KernelUniform, KernelTriangular, KernelEpanechnikov, KernelQuartic, KernelP2003FlatTop)}(io::IO, k::T) = println(io, "kernel function = " * string(k))
 #show methods for kernel functions with parameters
@@ -157,43 +139,11 @@ function show(io::IO, k::KernelPR1993FlatTop)
 end
 #show wrapper for STDOUT
 show{T<:KernelFunction}(k::T) = show(STDOUT, k)
-#toKernelFunction gets a kernel function given a string input (NOT TYPE STABLE)
-function toKernelFunction(x::ASCIIString) #WARNING: FUNCTION IS NOT TYPE STABLE
-	if x == "uniform"
-		return(KernelUniform())
-	elseif x == "triangular"
-		return(KernelTriangular())
-	elseif x == "epanechnikov"
-		return(KernelEpanechnikov())
-	elseif x == "quartic"
-		return(KernelQuartic())
-	elseif x == "gaussian"
-		return(KernelGaussian())
-	elseif x == "PR1993FlatTop"
-		return(KernelPR1993FlatTop())
-	elseif x == "PP2002Trap"
-		return(KernelPP2002Trap())
-	elseif x == "PP2002Smooth"
-		return(KernelPP2002Smooth())
-	else
-		error("Input string not a representation of a known kernel function")
-	end
-end
 
 
-#----------------------------------------------------------
-#FUNCTION
-#	evaluate
-#INPUT
-#	Let T<:Number. Function accepts:
-#		(kT::KernelType, x::Number): Apply kernel function defined by kT to input x
-#		(kT::KernelType, x::Vector{T}): Wrapper on (kT::KernelType, x::Number)
-#OUTPUT
-#	Output is of the same type as x for all methods
-#PURPOSE
-#	Obtain output of various kernel functions
-#NOTES
-#----------------------------------------------------------
+
+
+#------ EVALUATE method for evaluating kernel function at a given value ------------------------------
 #Common Kernel functions defined on the interval [-1, 1]
 evaluate{T<:Number}(x::T, kT::KernelUniform) = indicator(x, UnitRange(-1, 1)) * 0.5
 evaluate{T<:Number}(x::T, kT::KernelTriangular) = indicator(x, UnitRange(-1, 1)) * (1 - abs(x))
@@ -203,93 +153,57 @@ evaluate{T<:Number}(x::T, kT::KernelQuartic) = indicator(x, UnitRange(-1, 1)) * 
 evaluate{T<:Number}(x::T, kT::KernelGaussian) = kT.p1 * exp(-0.5 * x^2)
 #KernelPR1993FlatTop
 function evaluate{T<:Number}(x::T, kT::KernelPR1993FlatTop)
-	if abs(x) <= kT.m
-		return(one(T))
-	elseif abs(x) <= kT.M
-		return(1 - (abs(x) - kT.m) / (kT.M - kT.m))
-	else
-		return(zero(T))
+	if abs(x) <= kT.m; return(one(T))
+	elseif abs(x) <= kT.M; return(1 - (abs(x) - kT.m) / (kT.M - kT.m))
+	else; return(zero(T))
 	end
 end
 #KernelP2003FlatTop (equivalent to KernelPR1993FlatTop with m=0.5 and M=1)
 function evaluate{T<:Number}(x::T, kT::KernelP2003FlatTop)
-	if abs(x) <= 0.5
-		return(one(T))
-	elseif abs(x) <= 1
-		return(2 * (1 - abs(x)))
-	else
-		return(zero(T))
+	if abs(x) <= 0.5; return(one(T))
+	elseif abs(x) <= 1; return(2 * (1 - abs(x)))
+	else; return(zero(T))
 	end
 end
 #KernelPP2002Trap
 function evaluate{T<:Number}(x::T, kT::KernelPP2002Trap)
-	if x < 0
-		return(zero(T))
-	elseif x < kT.p1
-		return(x / kT.p1)
-	elseif x < 1 - kT.p1
-		return(one(T))
-	elseif x < 1
-		return((1 - x) / kT.p1)
-	else
-		return(zero(T))
+	if x < 0; return(zero(T))
+	elseif x < kT.p1; return(x / kT.p1)
+	elseif x < 1 - kT.p1; return(one(T))
+	elseif x < 1; return((1 - x) / kT.p1)
+	else; return(zero(T))
 	end
 end
 #KernelPP2002Smooth
 function evaluate{T<:Number}(x::T, kT::KernelPP2002Smooth)
-	if 0 <= x <= 1
-		return(1 - abs(2*x - 1)^kT.p1)
-	else
-		return(zero(T))
+	if 0 <= x <= 1; return(1 - abs(2*x - 1)^kT.p1)
+	else; return(zero(T))
 	end
 end
-#Vector input wrappers
-evaluate{T<:Number}(x::Vector{T}, kT::KernelUniform) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelTriangular) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelEpanechnikov) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelQuartic) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelGaussian) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelPR1993FlatTop) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelP2003FlatTop) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelPP2002Trap) = [ evaluate(x[n], kT) for n = 1:length(x) ]
-evaluate{T<:Number}(x::Vector{T}, kT::KernelPP2002Smooth) = [ evaluate(x[n], kT) for n = 1:length(x) ]
+#Array input wrappers
+evaluate{T<:Number}(x::Vector{T}, kT::KernelFunction) = [ evaluate(x[n], kT) for n = 1:length(x) ]
+evaluate{T<:Number}(x::Matrix{T}, kT::KernelFunction) = [ evaluate(x[n, m], kT) for n = 1:size(x, 1), m = 1:size(x, 2) ]
 
 
 
-
-
-#----------------------------------------------------------
-#FUNCTION
-#	nonzeroDomain
-#	paramDomain
-#INPUT
-#	nonzeroRange accepts:
-#		(kF::KernelFunction): kF is one of the kernel function types
-#	paramDomain accepts:
-#		(kF::KernelFunction, paramNum::Int): kF is a kernel function type. paramNum is an indicator of the parameter you are interested in. paramNum corresponds to the field number. Kernel function types with no fields (ie no parameters) will throw an error if input to this function.
-#OUTPUT
-#	Output is of both functions is a UnitRange
-#PURPOSE
-#	The purpose of nonzeroDomain is to return the domain (of kernel function input) over which the output of the kernel function is non-zero
-#	The purpose of paramDomain is to return the domain over which the indicated parameter can be defined.
-#NOTES
-#	A method for each of these functions should be defined for every kernel function type
-#----------------------------------------------------------
-nonzeroDomain(kT::KernelUniform) = UnitRange(-1, 1)
-nonzeroDomain(kT::KernelTriangular) = UnitRange(-1, 1)
-nonzeroDomain(kT::KernelEpanechnikov) = UnitRange(-1, 1)
-nonzeroDomain(kT::KernelQuartic) = UnitRange(-1, 1)
-nonzeroDomain(kT::KernelGaussian) = UnitRange(-Inf, Inf)
-nonzeroDomain(kT::KernelPR1993FlatTop) = UnitRange(-kT.M, kT.M)
-nonzeroDomain(kT::KernelP2003FlatTop) = UnitRange(-1, 1)
-nonzeroDomain(kT::KernelPP2002Trap) = UnitRange(0, 1)
-nonzeroDomain(kT::KernelPP2002Smooth) = UnitRange(0, 1)
-paramDomain(kT::KernelUniform, pNum::Int) = error("Kernel function has no parameters")
-paramDomain(kT::KernelTriangular, pNum::Int) = error("Kernel function has no parameters")
-paramDomain(kT::KernelEpanechnikov, pNum::Int) = error("Kernel function has no parameters")
-paramDomain(kT::KernelQuartic, paramNum::Int) = error("Kernel function has no parameters")
-paramDomain(kT::KernelGaussian, paramNum::Int) = (paramNum == 1) ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
-function paramDomain(kT::KernelPR1993FlatTop, paramNum::Int)
+#-----NONZERODOMAIN and PARAMDOMAIN ------------------------
+#	The purpose of nonzerodomain is to return the domain (of kernel function input) over which the output of the kernel function is non-zero
+#	The purpose of paramdomain is to return the domain over which the indicated parameter can be defined.
+nonzerodomain(kT::KernelUniform) = UnitRange(-1, 1)
+nonzerodomain(kT::KernelTriangular) = UnitRange(-1, 1)
+nonzerodomain(kT::KernelEpanechnikov) = UnitRange(-1, 1)
+nonzerodomain(kT::KernelQuartic) = UnitRange(-1, 1)
+nonzerodomain(kT::KernelGaussian) = UnitRange(-Inf, Inf)
+nonzerodomain(kT::KernelPR1993FlatTop) = UnitRange(-kT.M, kT.M)
+nonzerodomain(kT::KernelP2003FlatTop) = UnitRange(-1, 1)
+nonzerodomain(kT::KernelPP2002Trap) = UnitRange(0, 1)
+nonzerodomain(kT::KernelPP2002Smooth) = UnitRange(0, 1)
+paramdomain(kT::KernelUniform, pNum::Int) = error("Kernel function has no parameters")
+paramdomain(kT::KernelTriangular, pNum::Int) = error("Kernel function has no parameters")
+paramdomain(kT::KernelEpanechnikov, pNum::Int) = error("Kernel function has no parameters")
+paramdomain(kT::KernelQuartic, paramNum::Int) = error("Kernel function has no parameters")
+paramdomain(kT::KernelGaussian, paramNum::Int) = (paramNum == 1) ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
+function paramdomain(kT::KernelPR1993FlatTop, paramNum::Int)
 	if paramNum == 1
 		return(UnitRange(nextfloat(0.0), Inf))
 	elseif paramNum == 2
@@ -298,49 +212,29 @@ function paramDomain(kT::KernelPR1993FlatTop, paramNum::Int)
 		error("Invalid parameter number")
 	end
 end
-paramDomain(kT::KernelP2003FlatTop, pNum::Int) = error("Kernel function has no parameters")
-paramDomain(kT::KernelPP2002Trap) = UnitRange(nextfloat(0.0), 0.5)
-paramDomain(kT::KernelPP2002Smooth) = UnitRange(1.o, prevfloat(Inf))
+paramdomain(kT::KernelP2003FlatTop, pNum::Int) = error("Kernel function has no parameters")
+paramdomain(kT::KernelPP2002Trap) = UnitRange(nextfloat(0.0), 0.5)
+paramdomain(kT::KernelPP2002Smooth) = UnitRange(1.o, prevfloat(Inf))
 
 
 
 
 
 
-#----------------------------------------------------------
-#TYPE
-#	BandwidthWhiteNoise (Iteratively test for significance of autocorrelations using Guassian white-noise assumption for confidence interval at every lag)
-#	BandwidthBartlett (Iteratively test for significance of autocorrelations using Bartlett formula at each lag k, and testing for significance of autocorrelation at lag k+1)
-#	BandwidthP2003 (Politis (2003) "Adaptive Bandwidth Choice", Section 2.1, Empirical rule of picking M. One needs to specify parameters c and K_N in this rule. Constructor employs recommended values from paper of c=2.0 and K=5, or else data-driven K for the case where number of observations is supplied).
-#FIELDS
-#	Fields store parameteres necessary to estimate bandwidth using each method. All types contain the following field:
-#		adjustmentTerm::Float64: The estimated bandwidth is multiplied by this scalar, thus most constructors set this field to 1.0. However, the field is useful as it allows empiricists to apply ad hoc rules on the go.
-#	Other fields are unique to the type and described above
-#METHODS
-#	string(b::BandwidthMethod)
-#	copy(b::BandwidthMethod)
-#	show(b::BandwidthMethod)
-#	toBandwidthMethod(x::ASCIIString): Convert a string representation of a bandwidth method to the appropriate type
-#PURPOSE
-#	These types are used to define different methods for detecting bandwidth, all of which are called via the bandwidth function.
-#NOTES
-#----------------------------------------------------------
-#--------- ABSTRACT TYPE DEFINTIION
+#---------- TYPES FOR DIFFERENT METHODS OF BANDWIDTH ESTIMATION
+#Abstract super-type
 abstract BandwidthMethod
-#--------- TYPE DEFINITIONS
-#BandwidthWhiteNoise
+#type definitions
 type BandwidthWhiteNoise <: BandwidthMethod
 	adjustmentTerm::Float64
 	BandwidthWhiteNoise(adjustmentTerm::Float64) = (adjustmentTerm <= 0) ? error("Adjustment scalar must be strictly greater than zero") : new(adjustmentTerm)
 end
 BandwidthWhiteNoise() = BandwidthWhiteNoise(1.0)
-#BandwidthBartlett
 type BandwidthBartlett <:BandwidthMethod
 	adjustmentTerm::Float64
 	BandwidthBartlett(adjustmentTerm::Float64) = (adjustmentTerm <= 0) ? error("Adjustment scalar must be strictly greater than zero") : new(adjustmentTerm)
 end
 BandwidthBartlett() = BandwidthBartlett(1.0)
-#BandwidthP2003 (Politis (2003) "Adaptive Bandwidth Choice")
 type BandwidthP2003 <:BandwidthMethod
 	adjustmentTerm::Float64
 	c::Float64
@@ -355,14 +249,17 @@ end
 BandwidthP2003() = BandwidthP2003(1.0, 2.0, 5)
 BandwidthP2003(numObs::Int) = BandwidthP2003(1.0, 2.0, max(5, convert(Int, ceil(sqrt(log(10, numObs))))))
 #-------------- METHODS---------
-#string method returns string representation of BandwidthMethod
+#string
 string(x::BandwidthWhiteNoise) = "whiteNoise"
 string(x::BandwidthBartlett) = "bartlett"
 string(x::BandwidthP2003) = "P2003"
-#copy methods
+#copy, deepcopy
 copy(x::BandwidthWhiteNoise) = BandwidthWhiteNoise(copy(x.adjustmentTerm))
 copy(x::BandwidthBartlett) = BandwidthBartlett(copy(x.adjustmentTerm))
 copy(x::BandwidthP2003) = BandwidthP2003(copy(x.adjustmentTerm), copy(x.c), copy(x.K))
+deepcopy(x::BandwidthWhiteNoise) = BandwidthWhiteNoise(deepcopy(x.adjustmentTerm))
+deepcopy(x::BandwidthBartlett) = BandwidthBartlett(deepcopy(x.adjustmentTerm))
+deepcopy(x::BandwidthP2003) = BandwidthP2003(deepcopy(x.adjustmentTerm), deepcopy(x.c), deepcopy(x.K))
 #show method for BandwidthMethod
 function show{T<:Union(BandwidthWhiteNoise, BandwidthBartlett)}(io::IO, b::T)
 	println(io, "bandwidth method = " * string(b))
@@ -376,41 +273,6 @@ function show(io::IO, b::BandwidthP2003)
 end
 #show wrapper for STDOUT
 show{T<:BandwidthMethod}(b::T) = show(STDOUT, b)
-#toBandwidth converts string input to BandwidthMethod
-function toBandwidthMethod(x::ASCIIString, adjustmentTerm::Float64=1.0) #WARNING: FUNCTION IS NOT TYPE STABLE (ALTHOUGH PLAYS SUCH A SMALL ROLE PERFORMANCE UNLIKELY TO BE AFFECTED)
-	if x == "whiteNoise"
-		return(BandwidthWhiteNoise(adjustmentTerm))
-	elseif x == "bartlett"
-		return(BandwidthBartlett(adjustmentTerm))
-	elseif x == "P2003"
-		return(BandwidthP2003(adjustmentTerm, 2.0, 5))
-	else
-		error("Invalid string representation of bandwidth method type")
-	end
-end
-function toBandwidthMethod(x::ASCIIString, adjustmentTerm::Float64, p1::Number) #WARNING: FUNCTION IS NOT TYPE STABLE (ALTHOUGH PLAYS SUCH A SMALL ROLE PERFORMANCE UNLIKELY TO BE AFFECTED)
-	if x == "P2003"
-		return(BandwidthP2003(adjustmentTerm, convert(Float64, p1), 5))
-	else
-		if any(x .== validBandwidthMethodString)
-			error("Additional parameters unnecessary for input bandwidth")
-		else
-			error("Invalid string representation of bandwidth method type")
-		end
-	end
-end
-function toBandwidthMethod(x::ASCIIString, adjustmentTerm::Float64, p1::Number, p2::Number) #WARNING: FUNCTION IS NOT TYPE STABLE (ALTHOUGH PLAYS SUCH A SMALL ROLE PERFORMANCE UNLIKELY TO BE AFFECTED)
-	if x == "P2003"
-		return(BandwidthP2003(adjustmentTerm, convert(Float64, p1), convert(Int, p2)))
-	else
-		if any(x .== validBandwidthMethodString)
-			error("Additional parameters unnecessary for input bandwidth")
-		else
-			error("Invalid string representation of bandwidth method type")
-		end
-	end
-end
-
 
 
 
@@ -419,18 +281,13 @@ end
 #FUNCTION
 #	bandwidth
 #INPUT
-#	Let T<:Number. Function accepts:
-#		(x::Vector{T}, method::BandwidthWhiteNoise): Estimate bandwidth using white noise assumption to determine confidence bound for autocorrelations.
-#		(x::Vector{T}, method::BandwidthBartlett): Estimate bandwidth using Bartlett assumptions, e.g. underlying model is Moving Average (MA)
-#		(x::Vector{T}, method::BandwidthP2003): Estimate bandwidth using the Empirical rule described in Politis (2003) "Adaptive Bandwidth Estimation"
+#	(x::Vector{T<:Number}, method::BandwidthMethod): Estimate bandwidth using specified method on input data x
 #OUTPUT
 #	Output is the tuple (M::Int, xVar::Float64, covVec::Vector{Float64})
 #		M is the bandwidth estimator. Minimum possible estimate is 1, maximum possible estimate is length(x) - 1.
 #		xVar is the variance of the input data x but scaled using (1/length(x)) instead of (1/(length(x)-1))
 #		covVec is the vector of sample autocovariances (NOT autocorrelations) from lag 1 to lag K of input x. K is determined within the function.
 #	We pass all three of these variables as output because xVar and covVec are frequently used in the calling function, and so this saves duplicating computations.
-#PURPOSE
-#	Obtain a bandwidth estimator for use with a kernel function applied to some function (frequently the autocorrelation function) of the input data
 #NOTES
 #	M can be close to length(x). Typically, this is not a good situation, so the user will probably want to control for this in the calling function and bind maximum M to a more reasonable value.
 #	M has an enforced minimum value of 2. Allowing results of M < 2 typically result in kernel function evaluations that always equal 0.
@@ -551,33 +408,11 @@ end
 
 
 
-#----------------------------------------------------------
-#FUNCTION
-#	indicator
-#INPUT
-#	Function accepts:
-#		{T<:Number}(x::T, LB::T, UB::T): Returns one if LB <= x <= UB, zero otherwise.
-#		{T<:Number}(x::T, r::UnitRange): Returns one if x lies in the range, zero otherwise
-#OUTPUT
-#	Output is Int of 0 or 1.
-#PURPOSE
-#	An indicator function
-#NOTES
-#----------------------------------------------------------
-function indicator{T<:Number}(x::T, LB::T, UB::T)
-	if LB <= x <= UB
-		return(1)
-	else
-		return(0)
-	end
-end
-function indicator{T<:Number}(x::T, r::UnitRange)
-	if r.start <= x <= r.stop
-		return(1)
-	else
-		return(0)
-	end
-end
+#Non-exported indicator function for if a value lies in a specified range
+indicator{T<:Number}(x::T, LB::T, UB::T) = (LB <= x <= UB) ? 1 : 0
+indicator{T<:Number}(x::T, r::UnitRange) = (r.start <= x <= r.stop) ? 1 : 0
+
+
 
 
 end # module

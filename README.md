@@ -3,6 +3,10 @@
 A module for the [Julia](http://julialang.org/) language for [kernel-function based statistics](http://en.wikipedia.org/wiki/Kernel_%28statistics%29)
 
 
+## WARNING
+
+I made a major change to the way the module is structured today (2015-06-26) and have not gotten around to updating the docs yet. If you want to use this module in the mean-time you will need to examine the source yourself. I should get around to updating the docs in the next few weeks, although am considering holding off until Julia v0.4 arrives with its new documentation capabilities.
+
 ## Main features
 
 This module allows Julia users to specify and evaluate a range of different kernel functions. It also includes functionality for estimating bandwidths for use with various staistical procedures, including, but not limited to, estimation of optimal block lengths for dependent bootstraps.
@@ -45,7 +49,7 @@ Specific kernel functions from academic papers include:
 * `KernelPP2002Smooth`, from Paparoditis, Politis (2002) "The tapered block bootstrap for general statistics from stationary sequences". Fields (defined in that paper) include:
   * p1::Float64 (constrained to the interval [1, Inf))
 
-Every kernel function exhibits a constructor that requires no inputs. These constructors use sensible default values for the kernel parmeters, e.g. `KernelPR1993FlatTop() = KernelPR1993FlatTop(0.5, 1)`. 
+Every kernel function exhibits a constructor that requires no inputs. These constructors use sensible default values for the kernel parmeters, e.g. `KernelPR1993FlatTop() = KernelPR1993FlatTop(0.5, 1)`.
 
 Every `KernelFunction` exhibits the following very important function:
 
@@ -68,7 +72,7 @@ In addition to `evaluate`, every `KernelFunction` exhibits the following core me
 * show(kF::KernelFunction) -> wrapper on show(io::IO, kF::KernelFunction) that prints to `STDOUT`
 * toKernel(x::ASCIIString) -> attempts to convert an `ASCIIString` to a subtype of `KernelFunction`, e.g. `toKernelFunction("uniform")` returns `KernelUniform()`. Note, this function is essentially the inverse of `string`. By construction it is *not type stable*.
 * nonzeroDomain(kF::KernelFunction) -> returns a `UnitRange` that indicates the domain over which the input kernel function evaluates to a non-zero number.
-* paramDomain(kF::KernelFunction, pNum::Int) -> returns a `UnitRange` indicating the valid domain of the parameter number indicated in `pNum`. Parameter numbers correspond to the order in which fields are defined for the `KernelFunction`. If a `KernelFunction` does not have any fields/parameters or if `pNum` does not correspond to a field number, then this function throws an error. 
+* paramDomain(kF::KernelFunction, pNum::Int) -> returns a `UnitRange` indicating the valid domain of the parameter number indicated in `pNum`. Parameter numbers correspond to the order in which fields are defined for the `KernelFunction`. If a `KernelFunction` does not have any fields/parameters or if `pNum` does not correspond to a field number, then this function throws an error.
 
 
 #### Bandwidth estimation
