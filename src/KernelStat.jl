@@ -21,11 +21,10 @@ import 	Base.string,
 export	evaluate, #Evaluate kernel function at given input
 		activedomain, #Function that returns a UnitRange indicating the range over which kernel output is non-zero
 		paramdomain, #Function that returns a UnitRange indicating the feasible domain kernel parameters
+		setbandwidth!, #Function to adjust bandwidth of input kernel function
 		KernelFunction, #Abstract type that nests all kernel function types
 		KernelUniform, #Kernel function type
-		KernelTriangular, #Kernel function type
 		KernelEpanechnikov, #Kernel function type
-		KernelQuartic, #Kernel function type
 		KernelGaussian, #Kernel function type
 		KernelPR1993FlatTop, #Kernel function type
 		KernelP2003FlatTop, #Kernel function type
@@ -37,6 +36,7 @@ export	evaluate, #Evaluate kernel function at given input
 		HACVarianceBasic, #Basic HAC variance estimator
 		bandwidth, #Function for estimating bandwidth
 		BandwidthMethod, #Abstract type that nests all bandwidth method types
+		BandwidthMax, #Maximum possible bandwidth
 		BandwidthWhiteNoise, #Bandwidth type that uses Gaussian white noise assumption to get correlation confidence bounds
 		BandwidthBartlett, #Bandwidth type that uses Bartlett formula to get correlation confidence bounds
 		BandwidthP2003 #Bandwidth type implements the bandwidth estimation method of Politis (2003) "Adaptive Bandwidth Choice"
@@ -48,8 +48,7 @@ export	evaluate, #Evaluate kernel function at given input
 #----------------------------------------------------------
 #SET CONSTANTS FOR MODULE
 #----------------------------------------------------------
-#None currently needed
-
+const gaussianPremult = (1 / sqrt(2*pi))::Float64
 
 
 
@@ -75,14 +74,18 @@ type KernelUniform <: KernelFunction
 end
 KernelUniform() = KernelUniform(-1.0, 1.0)
 KernelUniform(LB::Number, UB::Number) = KernelUniform(convert(Float64, LB), convert(Float64, UB))
-type KernelTriangular <: KernelFunction; end #Currently only defined on [-1, 1]
-type KernelEpanechnikov <: KernelFunction; end #Currently only defined on [-1, 1]
-type KernelQuartic <: KernelFunction; end #Currently only defined on [-1, 1]
-type KernelGaussian <: KernelFunction
-	p1::Float64 #This is the scaling term, almost always set to 1 / sqrt(2*pi). We parameterize it for efficiency of computation on vector-input evaluations
-	KernelGaussian(p1::Float64) = (p1 <= 0) ? error("The parameter of this kernel function must be strictly positive") : new(p1)
+type KernelEpanechnikov <: KernelFunction
+	bandwidth::Float64
+	KernelEpanechnikov(bandwidth::Float64) = bandwidth <= 0 ? error("Bandwidth must be strictly positive") : new(bandwidth)
 end
-KernelGaussian() = KernelGaussian(1 / sqrt(2 * pi)) #Constructor for the most common use-case
+KernelEpanechnikov() = KernelEpanechnikov(1.0)
+KernelEpanechnikov(bw::Number) = KernelEpanechnikov(convert(Float64, bw))
+type KernelGaussian <: KernelFunction
+	bandwidth::Float64
+	KernelGaussian(bandwidth::Float64) = (bandwidth <= 0) ? error("Bandwidth must be strictly positive") : new(bandwidth)
+end
+KernelGaussian() = KernelGaussian(1.0) #Constructor for the most common use-case
+KernelGaussian(bw::Number) = KernelGaussian(convert(Float64, bw))
 #Politis, Romano (1993) "On a family of smoothing kernels of infinite order"
 type KernelPR1993FlatTop <: KernelFunction
 	m::Float64
@@ -111,83 +114,45 @@ KernelPP2002Smooth(p1::Int) = KernelPP2002Smooth(convert(Float64, p1))
 KernelPP2002Smooth() = KernelPP2002Smooth(1.3) #Optimal value from Paparoditis, Politis (2002)
 #Politis, Romano (1994) "The Stationary Bootstrap" (kernel function for variance estimator, see eqn 7)
 type KernelPR1994SB <: KernelFunction
-	p1::Int #The upper bound (usually the number of observations)
-	p2::Float64 #parameter of geometric distribution (1 / expected block length)
-	function KernelPR1994SB(p1::Int, p2::Float64)
-		p1 < 1 && error("Kernel function upper bound must be greater than zero")
-		!(0 < p2 < 1) && error("Geometric distribution parameter must lie on the interval (0, 1)")
-		new(p1, p2)
+	bandwidth::Float64 #The upper bound (usually the number of observations)
+	p::Float64 #parameter of geometric distribution (1 / expected block length)
+	function KernelPR1994SB(bandwidth::Float64, p::Float64)
+		bandwidth <= 0 && error("Bandwidth must be strictly positive")
+		!(0 < p < 1) && error("Geometric distribution parameter must lie on the interval (0, 1)")
+		new(bandwidth, p)
 	end
 end
+KernelPR1994SB() = KernelPR1994SB(1.0, 0.1)
+KernelPR1994SB(bandwidth::Number) = KernelPR1994SB(convert(Float64, bandwidth), 0.1)
+KernelPR1994SB(bandwidth::Number, p::Number) = KernelPR1994SB(convert(Float64, bandwidth), convert(Float64, p))
 #------- METHODS ------
 #string method gets string representation of type
 string(kT::KernelUniform) = "uniform"
-string(kT::KernelTriangular) = "triangular"
 string(kT::KernelEpanechnikov) = "epanechnikov"
-string(kT::KernelQuartic) = "quartic"
 string(kT::KernelGaussian) = "gaussian"
 string(kT::KernelPR1993FlatTop) = "PR1993FlatTop"
 string(kT::KernelP2003FlatTop) = "P2003FlatTop"
 string(kT::KernelPP2002Trap) = "PP2002Trap"
 string(kT::KernelPP2002Smooth) = "PP2002Smooth"
 string(kT::KernelPR1994SB) = "PR1994SB"
-#copy, deepcopy methods
-copy(kT::KernelUniform) = KernelUniform(copy(kT.LB), copy(kT.UB))
-copy(kT::KernelTriangular) = KernelTriangular()
-copy(kT::KernelEpanechnikov) = KernelEpanechnikov()
-copy(kT::KernelQuartic) = KernelQuartic()
-copy(kT::KernelGaussian) = KernalGaussian(copy(kT.p1))
-copy(kT::KernelPR1993FlatTop) = KernelPR1993FlatTop(copy(kT.m), copy(kT.M))
-copy(kT::KernelP2003FlatTop) = KernelP2003FlatTop()
-copy(kT::KernelPP2002Trap) = KernelPP2002Trap(copy(kT.p1))
-copy(kT::KernelPP2002Smooth) = KernelPP2002Smooth(copy(kT.p1))
-copy(kT::KernelPR1994SB) = KernelPR1994SB(copy(kT.p1), copy(kT.p2))
-deepcopy(kT::KernelUniform) = KernelUniform(deepcopy(kT.LB), deepcopy(kT.UB))
-deepcopy(kT::KernelTriangular) = KernelTriangular()
-deepcopy(kT::KernelEpanechnikov) = KernelEpanechnikov()
-deepcopy(kT::KernelQuartic) = KernelQuartic()
-deepcopy(kT::KernelGaussian) = KernalGaussian(deepcopy(kT.p1))
-deepcopy(kT::KernelPR1993FlatTop) = KernelPR1993FlatTop(deepcopy(kT.m), deepcopy(kT.M))
-deepcopy(kT::KernelP2003FlatTop) = KernelP2003FlatTop()
-deepcopy(kT::KernelPP2002Trap) = KernelPP2002Trap(deepcopy(kT.p1))
-deepcopy(kT::KernelPP2002Smooth) = KernelPP2002Smooth(deepcopy(kT.p1))
-deepcopy(kT::KernelPR1994SB) = KernelPR1994SB(deepcopy(kT.p1), deepcopy(kT.p2))
-#show method for parameter-less kernel functions
-show{T<:Union(KernelUniform, KernelTriangular, KernelEpanechnikov, KernelQuartic, KernelP2003FlatTop)}(io::IO, k::T) = println(io, "kernel function = " * string(k))
-#show methods for kernel functions with parameters
-function show{T<:Union(KernelGaussian, KernelPP2002Trap, KernelPP2002Smooth, KernelPR1994SB)}(io::IO, k::T)
-	println(io, "kernel function = " * string(k))
-	println(io, "    p1 = " * string(k.p1))
+#show method
+function show(io::IO, kF::KernelFunction)
+	println(io, "Kernel function = " * string(kF))
+	fieldNames = names(kF)
+	for n = 1:length(fieldNames)
+		println("    field " * string(fieldNames[n]) * " = " * string(getfield(kF, n)))
+	end
 end
-function show{T<:Union(KernelPR1994SB)}(io::IO, k::T)
-	println(io, "kernel function = " * string(k))
-	println(io, "    p1 = " * string(k.p1))
-	println(io, "    p2 = " * string(k.p2))
-end
-function show{T<:Union(KernelUniform)}(io::IO, k::T)
-	println(io, "kernel function = " * string(k))
-	println(io, "    lower bound = " * string(k.LB))
-	println(io, "    upper bound = " * string(k.UB))
-end
-function show(io::IO, k::KernelPR1993FlatTop)
-	println(io, "kernel function = " * string(k))
-	println(io, "    m = " * string(k.m))
-	println(io, "    M = " * string(k.M))
-end
-#show wrapper for STDOUT
 show{T<:KernelFunction}(k::T) = show(STDOUT, k)
 #------ EVALUATE method for evaluating kernel function at a given value ------------------------------
 #Common Kernel functions
-evaluate{T<:Number}(x::T, kT::KernelUniform) = indicator(x, UnitRange(kT.LB, kT.UB)) * (1 / (kT.UB - kT-LB))
-evaluate{T<:Number}(x::T, kT::KernelUniform, ::KernelNoIndCheck) = 1 / (kT.UB - kT-LB)
-evaluate{T<:Number}(x::T, kT::KernelTriangular) = indicator(x, UnitRange(-1, 1)) * (1 - abs(x))
-evaluate{T<:Number}(x::T, kT::KernelTriangular, ::KernelNoIndCheck) = 1 - abs(x)
-evaluate{T<:Number}(x::T, kT::KernelEpanechnikov) = indicator(x, UnitRange(-1, 1)) * 0.75 * (1 - x^2)
-evaluate{T<:Number}(x::T, kT::KernelEpanechnikov, ::KernelNoIndCheck) = 0.75 * (1 - x^2)
-evaluate{T<:Number}(x::T, kT::KernelQuartic) = indicator(x, UnitRange(-1, 1)) * 0.9375 * (1 - x^2)^2
-evaluate{T<:Number}(x::T, kT::KernelQuartic, ::KernelNoIndCheck) = 0.9375 * (1 - x^2)^2
-evaluate{T<:Number}(x::T, kT::KernelGaussian) = kT.p1 * exp(-0.5 * x^2)
-evaluate{T<:Number}(x::T, kT::KernelGaussian, ::KernelNoIndCheck) = kT.p1 * exp(-0.5 * x^2)
+evaluate(x::Number, kT::KernelUniform) = indicator(x, UnitRange(kT.LB, kT.UB)) * (1 / (kT.UB - kT.LB))
+evaluate(x::Number, kT::KernelUniform, ::KernelNoIndCheck) = 1 / (kT.UB - kT.LB)
+evaluate(x::Number, kT::KernelEpanechnikov) = indicator(x / kT.bandwidth, UnitRange(-1, 1)) * (0.75 / kT.bandwidth) * (1 - (x^2 / kT.bandwidth^2))
+evaluate(x::Number, kT::KernelEpanechnikov, ::KernelNoIndCheck) = (0.75 / kT.bandwidth) * (1 - (x^2 / kT.bandwidth^2))
+evaluate(x::Number, kT::KernelGaussian) = (1 / kT.bandwidth) * gaussianPremult * exp(-1 * (x^2 / (2 * kT.bandwidth^2)))
+evaluate(x::Number, kT::KernelGaussian, ::KernelNoIndCheck) = evaluate(x, kT)
+#Kernel functions from specific papers (note, may not satisfy standard kernel function properties)
 #KernelPR1993FlatTop
 function evaluate{T<:Number}(x::T, kT::KernelPR1993FlatTop)
 	if abs(x) <= kT.m; return(one(T))
@@ -195,7 +160,7 @@ function evaluate{T<:Number}(x::T, kT::KernelPR1993FlatTop)
 	else; return(zero(T))
 	end
 end
-evaluate{T<:Number}(x::T, kT::KernelPR1993FlatTop, ::KernelNoIndCheck) = evaluate(x, kT)
+evaluate(x::Number, kT::KernelPR1993FlatTop, ::KernelNoIndCheck) = evaluate(x, kT)
 #KernelP2003FlatTop (equivalent to KernelPR1993FlatTop with m=0.5 and M=1)
 function evaluate{T<:Number}(x::T, kT::KernelP2003FlatTop)
 	if abs(x) <= 0.5; return(one(T))
@@ -203,7 +168,7 @@ function evaluate{T<:Number}(x::T, kT::KernelP2003FlatTop)
 	else; return(zero(T))
 	end
 end
-evaluate{T<:Number}(x::T, kT::KernelP2003FlatTop, ::KernelNoIndCheck) = evaluate(x, kT)
+evaluate(x::Number, kT::KernelP2003FlatTop, ::KernelNoIndCheck) = evaluate(x, kT)
 #KernelPP2002Trap
 function evaluate{T<:Number}(x::T, kT::KernelPP2002Trap)
 	if x < 0; return(zero(T))
@@ -213,17 +178,17 @@ function evaluate{T<:Number}(x::T, kT::KernelPP2002Trap)
 	else; return(zero(T))
 	end
 end
-evaluate{T<:Number}(x::T, kT::KernelPP2002Trap, ::KernelNoIndCheck) = evaluate(x, kT)
+evaluate(x::Number, kT::KernelPP2002Trap, ::KernelNoIndCheck) = evaluate(x, kT)
 #KernelPP2002Smooth
 function evaluate{T<:Number}(x::T, kT::KernelPP2002Smooth)
 	if 0 <= x <= 1; return(1 - abs(2*x - 1)^kT.p1)
 	else; return(zero(T))
 	end
 end
-evaluate{T<:Number}(x::T, kT::KernelPP2002Smooth, ::KernelNoIndCheck) = 1 - abs(2*x - 1)^kT.p1
+evaluate(x::Number, kT::KernelPP2002Smooth, ::KernelNoIndCheck) = 1 - abs(2*x - 1)^kT.p1
 #KernelPR1994SB
-evaluate(x::Int, kT::KernelPR1994SB) = indicator(x, UnitRange(0, kT.p1)) * ((1 - x/kT.p1)*(1 - kT.p2)^x + (x/kT.p1)*(1 - kT.p2)^(x - kT.p1))
-evaluate(x::Int, kT::KernelPR1994SB, ::KernelNoIndCheck) = (1 - x/kT.p1)*(1 - kT.p2)^x + (x/kT.p1)*(1 - kT.p2)^(x - kT.p1)
+evaluate(x::Number, kT::KernelPR1994SB) = indicator(x, UnitRange(0, kT.bandwidth)) * ((1 - x/kT.bandwidth)*(1 - kT.p)^x + (x/kT.bandwidth)*(1 - kT.p)^(kT.bandwidth - x))
+evaluate(x::Number, kT::KernelPR1994SB, ::KernelNoIndCheck) = (1 - x/kT.bandwidth)*(1 - kT.p)^x + (x/kT.bandwidth)*(1 - kT.p)^(kT.bandwidth - x)
 #Array input wrappers
 evaluate{T<:Number}(x::AbstractVector{T}, kT::KernelFunction) = [ evaluate(x[n], kT) for n = 1:length(x) ]
 evaluate{T<:Number}(x::AbstractMatrix{T}, kT::KernelFunction) = [ evaluate(x[n, m], kT) for n = 1:size(x, 1), m = 1:size(x, 2) ]
@@ -231,24 +196,20 @@ evaluate{T<:Number}(x::AbstractMatrix{T}, kT::KernelFunction) = [ evaluate(x[n, 
 #The purpose of activedomain is to return the domain (of kernel function input) over which the output of the kernel function is active
 #The purpose of paramdomain is to return the domain over which the indicated parameter can be defined.
 activedomain(kT::KernelUniform) = UnitRange(kT.LB, kT.UB)
-activedomain(kT::KernelTriangular) = UnitRange(-1, 1)
-activedomain(kT::KernelEpanechnikov) = UnitRange(-1, 1)
-activedomain(kT::KernelQuartic) = UnitRange(-1, 1)
+activedomain(kT::KernelEpanechnikov) = UnitRange(-kT.bandwidth, kT.bandwidth)
 activedomain(kT::KernelGaussian) = UnitRange(-Inf, Inf)
 activedomain(kT::KernelPR1993FlatTop) = UnitRange(-kT.M, kT.M)
 activedomain(kT::KernelP2003FlatTop) = UnitRange(-1, 1)
 activedomain(kT::KernelPP2002Trap) = UnitRange(0, 1)
 activedomain(kT::KernelPP2002Smooth) = UnitRange(0, 1)
-activedomain(kT::KernelPR1994SB) = UnitRange(1, kT.p1)
+activedomain(kT::KernelPR1994SB) = UnitRange(0, kT.bandwidth)
 function paramdomain(kT::KernelUniform, pNum::Int)
 	pNum == 1 && return(UnitRange(-Inf, kT.UB))
 	pNum == 2 && return(UnitRange(kT.LB, Inf))
 	error("Invalid parameter number")
 end
-paramdomain(kT::KernelTriangular, pNum::Int) = error("Kernel function has no parameters")
-paramdomain(kT::KernelEpanechnikov, pNum::Int) = error("Kernel function has no parameters")
-paramdomain(kT::KernelQuartic, paramNum::Int) = error("Kernel function has no parameters")
-paramdomain(kT::KernelGaussian, paramNum::Int) = (paramNum == 1) ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
+paramdomain(kT::KernelEpanechnikov, pNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
+paramdomain(kT::KernelGaussian, paramNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
 function paramdomain(kT::KernelPR1993FlatTop, paramNum::Int)
 	paramNum == 1 && return(UnitRange(nextfloat(0.0), Inf))
 	paramNum == 2 && return(UnitRange(nextfloat(0.0), Inf))
@@ -258,11 +219,22 @@ paramdomain(kT::KernelP2003FlatTop, pNum::Int) = error("Kernel function has no p
 paramdomain(kT::KernelPP2002Trap, pNum::Int) = (pNum == 1) ? UnitRange(nextfloat(0.0), 0.5) : error("Invalid parameter number")
 paramdomain(kT::KernelPP2002Smooth) = (pNum == 1) ? UnitRange(1, Inf) : error("Invalid parameter number")
 function paramdomain(kT::KernelPR1994SB, pNum::Int)
-	pNum == 1 && return(UnitRange(1, Inf))
+	pNum == 1 && return(UnitRange(0, Inf))
 	pNum == 2 && return(UnitRange(nextfloat(0.0), prevfloat(1.0)))
 	error("Invalid parameter number")
 end
-
+function setbandwidth!(kT::KernelUniform, LB::Number, UB::Number)
+	kT.LB = convert(Float64, LB)
+	kT.UB = convert(Float64, UB)
+end
+function setbandwidth!(kT::KernelUniform, bandwidth::Number)
+	kT.LB = 0.0
+	kT.UB = convert(Float64, bandwidth)
+end
+function setbandwidth!{T<:Union(KernelEpanechnikov, KernelGaussian, KernelPR1994SB)}(kT::T, bandwidth::Number)
+	kT.bandwidth = convert(Float64, bandwidth)
+end
+setbandwidth!(kT::KernelFunction, bandwidth::Number) = error("The input kernel function does not have a natural bandwidth measure")
 
 
 
@@ -331,7 +303,7 @@ type HACVarianceBasic <: HACVarianceMethod
 	kernelFunction::KernelFunction
 	bandwidthMethod::BandwidthMethod
 	function HACVarianceBasic(kernelFunction::KernelFunction, bandwidthMethod::BandwidthMethod)
-		!(typeof(kernelFunction) <: Union(KernelUniform, KernelGaussian, KernelPR1994SB)) && error("This kernel function does not currently have a general enough form to accommodate HAC variance estimation")
+		!(typeof(kernelFunction) <: Union(KernelUniform, KernelGaussian, KernelEpanechnikov, KernelPR1994SB)) && error("This kernel function does not have appropriate properties for HAC variance estimation")
 		new(kernelFunction, bandwidthMethod)
 	end
 end
@@ -359,6 +331,7 @@ end
 function hacvariance{T<:Number}(x::AbstractVector{T}, method::HACVarianceBasic)
 	(M, xVar, xCov) = bandwidth(x, method.bandwidthMethod)
 	length(xCov) < M && append!(xCov, autocov(x, length(xCov)+1:M)) #Get any additional autocovariances that we might need
+	setbandwidth!(method.kernelFunction, M)
 	v = xVar
 	noIndCheck = KernelNoIndCheck()
 	for m = 1:M
@@ -392,7 +365,7 @@ end
 #----------------------------------------------------------
 function bandwidth{T<:Number}(x::AbstractVector{T}, method::BandwidthMax)
 	length(x) < 2 && error("Input data must have at least two observations")
-	return(length(x)-1, (length(x)-1 / length(x)) * var(x), Array(Float64, 0))
+	return(length(x)-1, ((length(x)-1) / length(x)) * var(x), Array(Float64, 0))
 end
 function bandwidth{T<:Number}(x::AbstractVector{T}, method::BandwidthWhiteNoise)
 	length(x) < 2 && error("Input data must have at least two observations")

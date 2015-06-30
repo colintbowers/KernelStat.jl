@@ -1,100 +1,100 @@
 using KernelStat
-#Load any entire modules that are needed
-
-#Load any specific variables/functions that are needed (use import ModuleName1.FunctionName1, ModuleName2.FunctionName2, etc)
-#(none currently needed)
-
-#Specify the variables/functions to export (use export FunctionName1, FunctionName2, etc)
-# export 	kernelList, #List of kernel functions types
-# 		randomKernel,
-# 		randomBandwidth,
-# 		testModule,
-# 		testKernelFuncBasic,
-# 		testBandwidthBasic,
-# 		testKernelShape
+using ARIMA
+using DependentBootstrap
 
 
 #-------------------------------
 # SIMULATION FUNCTIONS
 #-------------------------------
 #Simulate kernel functions
-#WARNING: The order of kernelList is important for the kernel plotting function
-const kernelList = [KernelUniform(), KernelTriangular(), KernelEpanechnikov(), KernelQuartic(), KernelGaussian(), KernelPR1993FlatTop(), KernelP2003FlatTop(), KernelPP2002Trap(), KernelPP2002Smooth()]::Vector{KernelFunction}
-randomKernel(kT::KernelUniform) = KernelUniform()
-randomKernel(kT::KernelTriangular) = KernelTriangular()
-randomKernel(kT::KernelEpanechnikov) = KernelEpanechnikov()
-randomKernel(kT::KernelQuartic) = KernelQuartic()
-randomKernel(kT::KernelGaussian) = KernelGaussian(abs(randn()))
-function randomKernel(kT::KernelPR1993FlatTop)
-	m = abs(randn())
-	M = m + abs(randn())
-	return(KernelPR1993FlatTop(m, M))
-end
-randomKernel(kT::KernelP2003FlatTop) = KernelP2003FlatTop()
-randomKernel(kT::KernelPP2002Trap) =  KernelPP2002Trap(0.5 * rand())
-randomKernel(kT::KernelPP2002Smooth) =  KernelPP2002Smooth(abs(randn()) + 1.0)
-#Simulate bandwidth methods
-const bandwidthList = [BandwidthWhiteNoise(), BandwidthBartlett(), BandwidthP2003()]
-randomBandwidth(bW::BandwidthWhiteNoise) = BandwidthWhiteNoise()
-randomBandwidth(bW::BandwidthBartlett) = BandwidthBartlett()
-randomBandwidth(bW::BandwidthP2003) = BandwidthP2003(1.0, 2 + 0.15 * abs(randn()), convert(Int, round(5 + 0.3 * abs(randn()))))
-
+const numObsBandwidthSim = 500::Int
+const maxCorLag = 6::Int
+const kernelList = [KernelUniform(), KernelEpanechnikov(), KernelGaussian(), KernelPR1993FlatTop(), KernelP2003FlatTop(), KernelPP2002Trap(), KernelPP2002Smooth(), KernelPR1994SB(numObsBandwidthSim)]::Vector{KernelFunction}
+const bandwidthList = [BandwidthWhiteNoise(), BandwidthBartlett(), BandwidthP2003(numObsBandwidthSim)]
+const hacList = [HACVarianceBasic(KernelUniform(0, maxCorLag), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelGaussian(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelEpanechnikov(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelPR1994SB(numObsBandwidthSim, 0.1), BandwidthMax())]
 
 
 #------------------------------
 # TEST FUNCTIONS
 #------------------------------
-function testModule(K::Int)
-	testKernelFuncBasic(K)
-	testBandwidthBasic(K)
-	println("All tests passed")
-end
-
-function testKernelFuncBasic(K::Int)
-	for kk = 1:K
-		rK = randomKernel(kernelList[rand(1:length(kernelList))])
-		kRange = nonzeroDomain(rK)
-		xIn = kRange.start + (kRange.stop - kRange.start) * rand()
-		x = evaluate(xIn, rK)
-		if typeof(rK) == KernelGaussian
-			x <= 0 && error("Invalid output from Gaussian kernel function")
-		else
-			if !(0 <= x <= 1)
-				println(string(rK))
-				error("Invalid output from kernel function")
-			end
+function testevaluate()
+	for k = 1:length(kernelList)
+		kF = kernelList[k]
+		aD = activedomain(kF)
+		if aD.start == -Inf || aD.stop == Inf
+			aD.start == -Inf ? (tempStart = -10) : (tempStart = aD.start)
+			aD.stop == Inf ? (tempStop = 10) : (tempStop = aD.stop)
+			aD = UnitRange(tempStart, tempStop)
 		end
+		xIn = [aD.start:(aD.stop - aD.start)/10:aD.stop]
+		xOut = [ evaluate(xIn[n], kF) for n = 1:length(xIn) ]
+		println("Kernel func = " * string(kF) * ". evaluate of active domain = " * string(xOut))
 	end
-	println("Basic kernel function test passed")
+	println("")
+	println("")
 	return(true)
 end
 
-function testBandwidthBasic(K::Int)
-	for kk = 1:K
-		rB = randomBandwidth(bandwidthList[rand(1:length(bandwidthList))])
-		N = rand(2:200)
-		x = randn(N)
-		(M, cVec) = bandwidth(x, rB)
-		M < 1 && error("bandwidth output too small")
-		if M > N - 1
-			println(M)
-			println(N-1)
-			error("bandwidth output too large")
+
+function testbandwidth()
+	for k = 0:maxCorLag
+		k == 0 ? maCoef = Array(Float64, 0) : maCoef = [ 1 / 2^p for p = 1:k ]
+		for j = 1:length(bandwidthList)
+			bC = bandwidthList[j]
+			mVec = Array(Int, 10)
+			for i = 1:10
+				x = simulate(numObsBandwidthSim, ARIMAModel(maCoef=maCoef))
+				(mVec[i], xVar, xCovVec) = bandwidth(x, bC)
+			end
+			println("Bandwidth method = " * string(bC))
+			println("    MA Order = " * string(k))
+			println("    Bandwidth estimates = " * string(mVec))
+			println("")
 		end
 	end
-	println("Basic bandwidth function test passed")
+	println("")
+	println("")
+	return(true)
 end
 
-# NEED TO BRING IN GADFLY FOR THIS ONE
-# function testKernelShape{T<:KernelFunction}(rK::T)
-# 	kRange = nonzeroDomain(rK)
-# 	if typeof(rK) != KernelGaussian
-# 		xVec = [kRange.start:(kRange.stop - kRange.start) * 0.01:kRange.stop]
-# 	else
-# 		xVec = [-5:0.1:5]
-# 	end
-# 	kOut = evaluate(xVec, rK)
-# 	return(plot(x=xVec, y=kOut, Geom.line, Guide.title(string(rK))))
-# end
 
-testModule(1000)
+function testhacvariance()
+	for k = 0:maxCorLag
+		k == 0 ? maCoef = Array(Float64, 0) : maCoef = [ 1 / 2^p for p = 1:k ]
+		x = simulate(numObsBandwidthSim, ARIMAModel(maCoef=maCoef))
+		meanBoot = dbootstrapstatistic(x, BootstrapParam(x, statistic=mean))
+		bootTrueVar = var(sqrt(numObsBandwidthSim) * meanBoot)
+		xMean = [ mean(simulate(numObsBandwidthSim, ARIMAModel(maCoef=maCoef))) for i = 1:2000 ]
+		simTrueVar = var(sqrt(numObsBandwidthSim) * xMean)
+		for j = 1:length(hacList)
+			hC = hacList[j]
+			vVec = Array(Float64, 10)
+			for i = 1:10
+				x = simulate(numObsBandwidthSim, ARIMAModel(maCoef=maCoef))
+				vVec[i] = hacvariance(x, hC)
+			end
+			show(hC)
+			println("True MA Order = " * string(k))
+			println("Simulated true variance estimate = " * string(simTrueVar))
+			println("Bootstrapped true variance estimate = " * string(bootTrueVar))
+			println("HAC estimates = " * string(vVec))
+			println("")
+		end
+	end
+	println("")
+	println("")
+	return(true)
+end
+
+
+testhacvariance()
+
+function testall(KK::Int)
+	testevaluate()
+	testbandwidth()
+	testhacvariance()
+	println("Tests complete.")
+end
+
+
+
