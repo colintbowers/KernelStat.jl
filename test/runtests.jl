@@ -11,7 +11,7 @@ const numObsBandwidthSim = 500::Int
 const maxCorLag = 6::Int
 const kernelList = [KernelUniform(), KernelEpanechnikov(), KernelGaussian(), KernelPR1993FlatTop(), KernelP2003FlatTop(), KernelPP2002Trap(), KernelPP2002Smooth(), KernelPR1994SB(numObsBandwidthSim)]::Vector{KernelFunction}
 const bandwidthList = [BandwidthWhiteNoise(), BandwidthBartlett(), BandwidthP2003(numObsBandwidthSim)]
-const hacList = [HACVarianceBasic(KernelUniform(0, maxCorLag), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelGaussian(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelEpanechnikov(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelPR1994SB(numObsBandwidthSim, 0.1), BandwidthMax())]
+const hacList = [HACVarianceBasic(KernelUniform(0, maxCorLag), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelGaussian(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelEpanechnikov(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelBartlett(1), BandwidthP2003(numObsBandwidthSim)), HACVarianceBasic(KernelPR1994SB(numObsBandwidthSim, 0.1), BandwidthMax())]
 
 
 #------------------------------
@@ -69,12 +69,14 @@ function testhacvariance()
 		for j = 1:length(hacList)
 			hC = hacList[j]
 			vVec = Array(Float64, 10)
+			bwVec = Array(Int, 10)
 			for i = 1:10
 				x = simulate(numObsBandwidthSim, ARIMAModel(maCoef=maCoef))
-				vVec[i] = hacvariance(x, hC)
+				(vVec[i], bwVec[i]) = hacvariance(x, hC)
 			end
 			show(hC)
 			println("True MA Order = " * string(k))
+			println("Bandwidth estimates = " * string(bwVec))
 			println("Simulated true variance estimate = " * string(simTrueVar))
 			println("Bootstrapped true variance estimate = " * string(bootTrueVar))
 			println("HAC estimates = " * string(vVec))

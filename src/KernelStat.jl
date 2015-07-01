@@ -23,7 +23,10 @@ export	evaluate, #Evaluate kernel function at given input
 		paramdomain, #Function that returns a UnitRange indicating the feasible domain kernel parameters
 		setbandwidth!, #Function to adjust bandwidth of input kernel function
 		KernelFunction, #Abstract type that nests all kernel function types
+		KernelDummy, #Dummy type (useful for update! routines)
 		KernelUniform, #Kernel function type
+		KernelBartlett, #Kernel function type
+		KernelTriangular, #Identical to KernelBartlett
 		KernelEpanechnikov, #Kernel function type
 		KernelGaussian, #Kernel function type
 		KernelPR1993FlatTop, #Kernel function type
@@ -36,6 +39,7 @@ export	evaluate, #Evaluate kernel function at given input
 		HACVarianceBasic, #Basic HAC variance estimator
 		bandwidth, #Function for estimating bandwidth
 		BandwidthMethod, #Abstract type that nests all bandwidth method types
+		BandwidthDummy, #Dummy type (useful for update! functions)
 		BandwidthMax, #Maximum possible bandwidth
 		BandwidthWhiteNoise, #Bandwidth type that uses Gaussian white noise assumption to get correlation confidence bounds
 		BandwidthBartlett, #Bandwidth type that uses Bartlett formula to get correlation confidence bounds
@@ -62,6 +66,8 @@ const gaussianPremult = (1 / sqrt(2*pi))::Float64
 abstract KernelFunction
 #Dummy type for evaluate function that ditches the indicator function check
 type KernelNoIndCheck; end
+#General dummy type
+type KernelDummy <: KernelFunction ; end
 #------- TYPE DEFINITIONS ---------------
 #Common kernel functions
 type KernelUniform <: KernelFunction
@@ -74,6 +80,18 @@ type KernelUniform <: KernelFunction
 end
 KernelUniform() = KernelUniform(-1.0, 1.0)
 KernelUniform(LB::Number, UB::Number) = KernelUniform(convert(Float64, LB), convert(Float64, UB))
+type KernelBartlett <: KernelFunction
+	bandwidth::Float64
+	KernelBartlett(bandwidth::Float64) = bandwidth <= 0 ? error("Bandwidth must be strictly positive") : new(bandwidth)
+end
+KernelBartlett() = KernelBartlett(1.0)
+KernelBartlett(bw::Number) = KernelBartlett(convert(Float64, bw))
+type KernelTriangular <: KernelFunction #Identical to KernelBartlett
+	bandwidth::Float64
+	KernelTriangular(bandwidth::Float64) = bandwidth <= 0 ? error("Bandwidth must be strictly positive") : new(bandwidth)
+end
+KernelTriangular() = KernelTriangular(1.0)
+KernelTriangular(bw::Number) = KernelTriangular(convert(Float64, bw))
 type KernelEpanechnikov <: KernelFunction
 	bandwidth::Float64
 	KernelEpanechnikov(bandwidth::Float64) = bandwidth <= 0 ? error("Bandwidth must be strictly positive") : new(bandwidth)
@@ -128,6 +146,8 @@ KernelPR1994SB(bandwidth::Number, p::Number) = KernelPR1994SB(convert(Float64, b
 #------- METHODS ------
 #string method gets string representation of type
 string(kT::KernelUniform) = "uniform"
+string(kT::KernelBartlett) = "bartlett"
+string(kT::KernelTriangular) = "triangular"
 string(kT::KernelEpanechnikov) = "epanechnikov"
 string(kT::KernelGaussian) = "gaussian"
 string(kT::KernelPR1993FlatTop) = "PR1993FlatTop"
@@ -148,6 +168,8 @@ show{T<:KernelFunction}(k::T) = show(STDOUT, k)
 #Common Kernel functions
 evaluate(x::Number, kT::KernelUniform) = indicator(x, UnitRange(kT.LB, kT.UB)) * (1 / (kT.UB - kT.LB))
 evaluate(x::Number, kT::KernelUniform, ::KernelNoIndCheck) = 1 / (kT.UB - kT.LB)
+evaluate{T<:Union(KernelBartlett, KernelTriangular)}(x::Number, kT::T) = indicator(x / kT.bandwidth, UnitRange(-1, 1)) * (1 - abs(x / kT.bandwidth))
+evaluate{T<:Union(KernelBartlett, KernelTriangular)}(x::Number, kT::T, ::KernelNoIndCheck) = 1 - abs(x / kT.bandwidth)
 evaluate(x::Number, kT::KernelEpanechnikov) = indicator(x / kT.bandwidth, UnitRange(-1, 1)) * (0.75 / kT.bandwidth) * (1 - (x^2 / kT.bandwidth^2))
 evaluate(x::Number, kT::KernelEpanechnikov, ::KernelNoIndCheck) = (0.75 / kT.bandwidth) * (1 - (x^2 / kT.bandwidth^2))
 evaluate(x::Number, kT::KernelGaussian) = (1 / kT.bandwidth) * gaussianPremult * exp(-1 * (x^2 / (2 * kT.bandwidth^2)))
@@ -187,7 +209,7 @@ function evaluate{T<:Number}(x::T, kT::KernelPP2002Smooth)
 end
 evaluate(x::Number, kT::KernelPP2002Smooth, ::KernelNoIndCheck) = 1 - abs(2*x - 1)^kT.p1
 #KernelPR1994SB
-evaluate(x::Number, kT::KernelPR1994SB) = indicator(x, UnitRange(0, kT.bandwidth)) * ((1 - x/kT.bandwidth)*(1 - kT.p)^x + (x/kT.bandwidth)*(1 - kT.p)^(kT.bandwidth - x))
+evaluate(x::Number, kT::KernelPR1994SB) = indicator(x, UnitRange(0.0, kT.bandwidth)) * ((1 - x/kT.bandwidth)*(1 - kT.p)^x + (x/kT.bandwidth)*(1 - kT.p)^(kT.bandwidth - x))
 evaluate(x::Number, kT::KernelPR1994SB, ::KernelNoIndCheck) = (1 - x/kT.bandwidth)*(1 - kT.p)^x + (x/kT.bandwidth)*(1 - kT.p)^(kT.bandwidth - x)
 #Array input wrappers
 evaluate{T<:Number}(x::AbstractVector{T}, kT::KernelFunction) = [ evaluate(x[n], kT) for n = 1:length(x) ]
@@ -197,6 +219,7 @@ evaluate{T<:Number}(x::AbstractMatrix{T}, kT::KernelFunction) = [ evaluate(x[n, 
 #The purpose of paramdomain is to return the domain over which the indicated parameter can be defined.
 activedomain(kT::KernelUniform) = UnitRange(kT.LB, kT.UB)
 activedomain(kT::KernelEpanechnikov) = UnitRange(-kT.bandwidth, kT.bandwidth)
+activedomain{T<:Union(KernelBartlett, KernelTriangular)}(kT::T) = UnitRange(-kT.bandwidth, kT.bandwidth)
 activedomain(kT::KernelGaussian) = UnitRange(-Inf, Inf)
 activedomain(kT::KernelPR1993FlatTop) = UnitRange(-kT.M, kT.M)
 activedomain(kT::KernelP2003FlatTop) = UnitRange(-1, 1)
@@ -209,6 +232,7 @@ function paramdomain(kT::KernelUniform, pNum::Int)
 	error("Invalid parameter number")
 end
 paramdomain(kT::KernelEpanechnikov, pNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
+paramdomain{T<:Union(KernelBartlett, KernelTriangular)}(kT::T, pNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
 paramdomain(kT::KernelGaussian, paramNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
 function paramdomain(kT::KernelPR1993FlatTop, paramNum::Int)
 	paramNum == 1 && return(UnitRange(nextfloat(0.0), Inf))
@@ -231,7 +255,7 @@ function setbandwidth!(kT::KernelUniform, bandwidth::Number)
 	kT.LB = 0.0
 	kT.UB = convert(Float64, bandwidth)
 end
-function setbandwidth!{T<:Union(KernelEpanechnikov, KernelGaussian, KernelPR1994SB)}(kT::T, bandwidth::Number)
+function setbandwidth!{T<:Union(KernelEpanechnikov, KernelGaussian, KernelPR1994SB, KernelTriangular, KernelBartlett)}(kT::T, bandwidth::Number)
 	kT.bandwidth = convert(Float64, bandwidth)
 end
 setbandwidth!(kT::KernelFunction, bandwidth::Number) = error("The input kernel function does not have a natural bandwidth measure")
@@ -243,9 +267,16 @@ setbandwidth!(kT::KernelFunction, bandwidth::Number) = error("The input kernel f
 #---------- TYPES FOR DIFFERENT METHODS OF BANDWIDTH ESTIMATION
 #Abstract super-type
 abstract BandwidthMethod
+#General dummy type (useful for update! functions)
+type BandwidthDummy <: BandwidthMethod; end
 #Dummy type for using maximum possible bandwidth
 type BandwidthMax <: BandwidthMethod; end
 #type definitions
+type BandwidthStockWatsonDefault
+	adjustmentTerm::Float64
+	BandwidthStockWatsonDefault(adjustmentTerm::Float64) = (adjustmentTerm <= 0) ? error("Adjustment scalar must be strictly greater than zero") : new(adjustmentTerm)
+end
+BandwidthStockWatsonDefault() = BandwidthStockWatsonDefault(1.0)
 type BandwidthWhiteNoise <: BandwidthMethod
 	adjustmentTerm::Float64
 	BandwidthWhiteNoise(adjustmentTerm::Float64) = (adjustmentTerm <= 0) ? error("Adjustment scalar must be strictly greater than zero") : new(adjustmentTerm)
@@ -271,30 +302,21 @@ BandwidthP2003() = BandwidthP2003(1.0, 2.0, 5)
 BandwidthP2003(numObs::Int) = BandwidthP2003(1.0, 2.0, max(5, convert(Int, ceil(sqrt(log(10, numObs))))))
 #-------------- METHODS---------
 #string
+string(x::BandwidthMax) = "maximumBandwidth"
+string(x::BandwidthStockWatsonDefault) = "stockWatsonDefault"
 string(x::BandwidthWhiteNoise) = "whiteNoise"
 string(x::BandwidthBartlett) = "bartlett"
 string(x::BandwidthP2003) = "P2003"
-#copy, deepcopy
-copy(x::BandwidthWhiteNoise) = BandwidthWhiteNoise(copy(x.adjustmentTerm))
-copy(x::BandwidthBartlett) = BandwidthBartlett(copy(x.adjustmentTerm))
-copy(x::BandwidthP2003) = BandwidthP2003(copy(x.adjustmentTerm), copy(x.c), copy(x.K))
-deepcopy(x::BandwidthWhiteNoise) = BandwidthWhiteNoise(deepcopy(x.adjustmentTerm))
-deepcopy(x::BandwidthBartlett) = BandwidthBartlett(deepcopy(x.adjustmentTerm))
-deepcopy(x::BandwidthP2003) = BandwidthP2003(deepcopy(x.adjustmentTerm), deepcopy(x.c), deepcopy(x.K))
 #show method for BandwidthMethod
-function show{T<:Union(BandwidthWhiteNoise, BandwidthBartlett)}(io::IO, b::T)
+function show(io::IO, b::BandwidthMethod)
 	println(io, "bandwidth method = " * string(b))
-	println(io, "    adjustment term = " * string(b.adjustmentTerm))
-end
-function show(io::IO, b::BandwidthP2003)
-	println(io, "bandwidth method = " * string(b))
-	println(io, "    adjustment term = " * string(b.adjustmentTerm))
-	println(io, "    c = " * string(b.c))
-	println(io, "    K = " * string(b.K))
+	fieldNames = names(b)
+	for n = 1:length(fieldNames)
+		println("    field " * string(fieldNames[n]) * " = " * string(getfield(b, n)))
+	end
 end
 #show wrapper for STDOUT
 show{T<:BandwidthMethod}(b::T) = show(STDOUT, b)
-
 #---------- TYPES FOR DIFFERENT METHODS OF HAC-VARIANCE ESTIMATION
 #Abstract super-type
 abstract HACVarianceMethod
@@ -303,10 +325,13 @@ type HACVarianceBasic <: HACVarianceMethod
 	kernelFunction::KernelFunction
 	bandwidthMethod::BandwidthMethod
 	function HACVarianceBasic(kernelFunction::KernelFunction, bandwidthMethod::BandwidthMethod)
-		!(typeof(kernelFunction) <: Union(KernelUniform, KernelGaussian, KernelEpanechnikov, KernelPR1994SB)) && error("This kernel function does not have appropriate properties for HAC variance estimation")
+		!(typeof(kernelFunction) <: Union(KernelUniform, KernelGaussian, KernelEpanechnikov, KernelPR1994SB, KernelBartlett, KernelTriangular)) && error("This kernel function does not have appropriate properties for HAC variance estimation")
 		new(kernelFunction, bandwidthMethod)
 	end
 end
+HACVarianceBasic() = HACVarianceBasic(KernelEpanechnikov(), BandwidthP2003())
+HACVarianceBasic(numObs::Int) = HACVarianceBasic(KernelEpanechnikov(), BandwidthP2003(numObs))
+HACVarianceBasic{T<:Number}(x::Vector{T}) = HACVarianceBasic(KernelEpanechnikov(), BandwidthP2003(length(x)))
 #---------- METHODS ----------------
 string(::HACVarianceBasic) = "hacVarianceBasic"
 copy(x::HACVarianceBasic) = HACVarianceBasic(copy(x.kernelFunction), copy(x.bandwidthMethod))
@@ -316,30 +341,6 @@ function show(io::IO, x::HACVarianceBasic)
 	show(io, x.kernelFunction)
 	show(io, x.bandwidthMethod)
 end
-
-
-
-#----------------------------------------------------------
-#FUNCTION
-#	hacvariance
-#INPUT
-#	(x::Vector{T<:Number}, method::HACVarianceMethod): Estimate variance using specified method
-#OUTPUT
-#	Output is a Float64 variance estimator
-#NOTES
-#----------------------------------------------------------
-function hacvariance{T<:Number}(x::AbstractVector{T}, method::HACVarianceBasic)
-	(M, xVar, xCov) = bandwidth(x, method.bandwidthMethod)
-	length(xCov) < M && append!(xCov, autocov(x, length(xCov)+1:M)) #Get any additional autocovariances that we might need
-	setbandwidth!(method.kernelFunction, M)
-	v = xVar
-	noIndCheck = KernelNoIndCheck()
-	for m = 1:M
-		v += 2 * evaluate(m, method.kernelFunction, noIndCheck) * xCov[m]
-	end
-	return(v)
-end
-
 
 
 
@@ -366,6 +367,10 @@ end
 function bandwidth{T<:Number}(x::AbstractVector{T}, method::BandwidthMax)
 	length(x) < 2 && error("Input data must have at least two observations")
 	return(length(x)-1, ((length(x)-1) / length(x)) * var(x), Array(Float64, 0))
+end
+function bandwidth{T<:Number}(x::AbstractVector{T}, method::BandwidthStockWatsonDefault)
+	length(x) < 2 && error("Input data must have at least two observations")
+	return(0.75 * length(x)^(1/3), ((length(x)-1) / length(x)) * var(x), Array(Float64, 0))
 end
 function bandwidth{T<:Number}(x::AbstractVector{T}, method::BandwidthWhiteNoise)
 	length(x) < 2 && error("Input data must have at least two observations")
@@ -479,6 +484,34 @@ function bandwidth{T<:Number}(x::AbstractVector{T}, method::BandwidthP2003)
 	xVar = ((length(x)-1) /  length(x)) * var(x) #Used to scale autocorrelations to autocovariances for return argument
 	return(M, xVar, xVar * corVec)
 end
+
+
+
+
+
+#----------------------------------------------------------
+#FUNCTION
+#	hacvariance
+#INPUT
+#	(x::Vector{T<:Number}, method::HACVarianceMethod): Estimate variance using specified method
+#OUTPUT
+#	Output is a Float64 variance estimator
+#NOTES
+#----------------------------------------------------------
+function hacvariance{T<:Number}(x::AbstractVector{T}, method::HACVarianceBasic)
+	(M, xVar, xCov) = bandwidth(x, method.bandwidthMethod)
+	length(xCov) < M && append!(xCov, autocov(x, length(xCov)+1:M)) #Get any additional autocovariances that we might need
+	setbandwidth!(method.kernelFunction, M)
+	kernelAdjTerm = 1 / evaluate(0.0, method.kernelFunction) #Used to scale kernel functions that don't satisfy k(0) = 1
+	v = xVar
+	noIndCheck = KernelNoIndCheck() #Since we've set the bandwidth to M, we can safely ignore indicator checks
+	for m = 1:M
+		v += 2 * kernelAdjTerm * evaluate(m, method.kernelFunction, noIndCheck) * xCov[m]
+	end
+	return(v, M)
+end
+
+
 
 
 
