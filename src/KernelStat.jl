@@ -145,6 +145,7 @@ KernelPR1994SB(bandwidth::Number) = KernelPR1994SB(convert(Float64, bandwidth), 
 KernelPR1994SB(bandwidth::Number, p::Number) = KernelPR1994SB(convert(Float64, bandwidth), convert(Float64, p))
 #------- METHODS ------
 #string method gets string representation of type
+string(kT::KernelDummy) = "dummy"
 string(kT::KernelUniform) = "uniform"
 string(kT::KernelBartlett) = "bartlett"
 string(kT::KernelTriangular) = "triangular"
@@ -164,6 +165,11 @@ function show(io::IO, kF::KernelFunction)
 	end
 end
 show{T<:KernelFunction}(k::T) = show(STDOUT, k)
+#deepcopy method
+function deepcopy(kF::KernelFunction)
+	tempArgs = [ deepcopy(getfield(kF, i)) for i = 1:length(names(kF)) ]
+	return(eval(parse(string(typeof(kF)) * "(tempArgs...)")))
+end
 #------ EVALUATE method for evaluating kernel function at a given value ------------------------------
 #Common Kernel functions
 evaluate(x::Number, kT::KernelUniform) = indicator(x, UnitRange(kT.LB, kT.UB)) * (1 / (kT.UB - kT.LB))
@@ -315,8 +321,12 @@ function show(io::IO, b::BandwidthMethod)
 		println("    field " * string(fieldNames[n]) * " = " * string(getfield(b, n)))
 	end
 end
-#show wrapper for STDOUT
 show{T<:BandwidthMethod}(b::T) = show(STDOUT, b)
+#deepcopy
+function deepcopy(x::BandwidthMethod)
+	tempArgs = [ deepcopy(getfield(x, i)) for i = 1:length(names(x)) ]
+	return(eval(parse(string(typeof(x)) * "(tempArgs...)")))
+end
 #---------- TYPES FOR DIFFERENT METHODS OF HAC-VARIANCE ESTIMATION
 #Abstract super-type
 abstract HACVarianceMethod
@@ -334,12 +344,15 @@ HACVarianceBasic(numObs::Int) = HACVarianceBasic(KernelEpanechnikov(), Bandwidth
 HACVarianceBasic{T<:Number}(x::Vector{T}) = HACVarianceBasic(KernelEpanechnikov(), BandwidthP2003(length(x)))
 #---------- METHODS ----------------
 string(::HACVarianceBasic) = "hacVarianceBasic"
-copy(x::HACVarianceBasic) = HACVarianceBasic(copy(x.kernelFunction), copy(x.bandwidthMethod))
-deepcopy(x::HACVarianceBasic) = HACVarianceBasic(deepcopy(x.kernelFunction), deepcopy(x.bandwidthMethod))
 function show(io::IO, x::HACVarianceBasic)
 	println(io, "HAC variance estimator type. Parameters are:")
 	show(io, x.kernelFunction)
 	show(io, x.bandwidthMethod)
+end
+#deepcopy
+function deepcopy(x::HACVarianceMethod)
+	tempArgs = [ deepcopy(getfield(x, i)) for i = 1:length(names(x)) ]
+	return(eval(parse(string(typeof(x)) * "(tempArgs...)")))
 end
 
 
@@ -508,6 +521,7 @@ function hacvariance{T<:Number}(x::AbstractVector{T}, method::HACVarianceBasic)
 	for m = 1:M
 		v += 2 * kernelAdjTerm * evaluate(m, method.kernelFunction, noIndCheck) * xCov[m]
 	end
+	v = convert(Float64, max(v, 0.0)) #variance estimators should be non-negative
 	return(v, M)
 end
 
