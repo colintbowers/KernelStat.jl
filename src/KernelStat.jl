@@ -29,6 +29,7 @@ export	evaluate, #Evaluate kernel function at given input
 		KernelTriangular, #Identical to KernelBartlett
 		KernelEpanechnikov, #Kernel function type
 		KernelGaussian, #Kernel function type
+		KernelParzen2009RK, #Kernel function type
 		KernelPR1993FlatTop, #Kernel function type
 		KernelP2003FlatTop, #Kernel function type
 		KernelPP2002Trap, #Kernel function type
@@ -53,7 +54,6 @@ export	evaluate, #Evaluate kernel function at given input
 #SET CONSTANTS FOR MODULE
 #----------------------------------------------------------
 const gaussianPremult = (1 / sqrt(2*pi))::Float64
-
 
 
 #----------------------------------------------------------
@@ -104,6 +104,10 @@ type KernelGaussian <: KernelFunction
 end
 KernelGaussian() = KernelGaussian(1.0) #Constructor for the most common use-case
 KernelGaussian(bw::Number) = KernelGaussian(convert(Float64, bw))
+#Kernel functions from specific papers
+#Barndorff-Nielsen, Hansen, Lunde, Shephard (2009) "Realized Kernels in Practice"
+type KernelParzen2009RK <: KernelFunction
+end
 #Politis, Romano (1993) "On a family of smoothing kernels of infinite order"
 type KernelPR1993FlatTop <: KernelFunction
 	m::Float64
@@ -151,6 +155,7 @@ string(kT::KernelBartlett) = "bartlett"
 string(kT::KernelTriangular) = "triangular"
 string(kT::KernelEpanechnikov) = "epanechnikov"
 string(kT::KernelGaussian) = "gaussian"
+string(kT::KernelParzen2009RK) = "parzen2009RK"
 string(kT::KernelPR1993FlatTop) = "PR1993FlatTop"
 string(kT::KernelP2003FlatTop) = "P2003FlatTop"
 string(kT::KernelPP2002Trap) = "PP2002Trap"
@@ -166,10 +171,10 @@ function show(io::IO, kF::KernelFunction)
 end
 show{T<:KernelFunction}(k::T) = show(STDOUT, k)
 #deepcopy method
-function deepcopy(kF::KernelFunction)
-	tempArgs = [ deepcopy(getfield(kF, i)) for i = 1:length(names(kF)) ]
-	return(eval(parse(string(typeof(kF)) * "(tempArgs...)")))
-end
+# function deepcopy(kF::KernelFunction)
+# 	tempArgs = [ deepcopy(getfield(kF, i)) for i = 1:length(names(kF)) ]
+# 	return(eval(parse(string(typeof(kF)) * "(tempArgs...)")))
+# end
 #------ EVALUATE method for evaluating kernel function at a given value ------------------------------
 #Common Kernel functions
 evaluate(x::Number, kT::KernelUniform) = indicator(x, UnitRange(kT.LB, kT.UB)) * (1 / (kT.UB - kT.LB))
@@ -180,6 +185,18 @@ evaluate(x::Number, kT::KernelEpanechnikov) = indicator(x / kT.bandwidth, UnitRa
 evaluate(x::Number, kT::KernelEpanechnikov, ::KernelNoIndCheck) = (0.75 / kT.bandwidth) * (1 - (x^2 / kT.bandwidth^2))
 evaluate(x::Number, kT::KernelGaussian) = (1 / kT.bandwidth) * gaussianPremult * exp(-1 * (x^2 / (2 * kT.bandwidth^2)))
 evaluate(x::Number, kT::KernelGaussian, ::KernelNoIndCheck) = evaluate(x, kT)
+function evaluate{T<:Number}(x::T, kT::KernelParzen2009RK)
+	if x < 0; return(zero(T))
+	elseif x <= 0.5; return(1 - 6*x^2 + 6*x^3)
+	elseif x <= 1; return(2*(1 - x)^3)
+	else return(zero(T))
+	end
+end
+function evaluate{T<:Number}(x::T, kT::KernelParzen2009RK, ::KernelNoIndCheck)
+	if x <= 0.5; return(1 - 6*x^2 + 6*x^3)
+	else; return(2*(1 - x)^3)
+	end
+end
 #Kernel functions from specific papers (note, may not satisfy standard kernel function properties)
 #KernelPR1993FlatTop
 function evaluate{T<:Number}(x::T, kT::KernelPR1993FlatTop)
@@ -220,6 +237,16 @@ evaluate(x::Number, kT::KernelPR1994SB, ::KernelNoIndCheck) = (1 - x/kT.bandwidt
 #Array input wrappers
 evaluate{T<:Number}(x::AbstractVector{T}, kT::KernelFunction) = [ evaluate(x[n], kT) for n = 1:length(x) ]
 evaluate{T<:Number}(x::AbstractMatrix{T}, kT::KernelFunction) = [ evaluate(x[n, m], kT) for n = 1:size(x, 1), m = 1:size(x, 2) ]
+#-----kernelweight ------------------------
+#This function transforms a kernelFunction into a set of weights
+function kernelweight(kF::KernelFunction, numWeight::Int)
+	r = activedomain(kF)
+	r.start > 0 && error("Kernel function active domain start point too high to construct weights")
+	r.stop < numWeight - 1 && error("Kernel function active domain end point not high enough to construct weights")
+	w = [ evaluate(n, kF) for n = 0:numWeight-1 ]
+	w *= (1 / sum(w)) #scale weights so they sum to unity
+	return(w)
+end
 #-----activedomain and paramdomain ------------------------
 #The purpose of activedomain is to return the domain (of kernel function input) over which the output of the kernel function is active
 #The purpose of paramdomain is to return the domain over which the indicated parameter can be defined.
@@ -227,6 +254,7 @@ activedomain(kT::KernelUniform) = UnitRange(kT.LB, kT.UB)
 activedomain(kT::KernelEpanechnikov) = UnitRange(-kT.bandwidth, kT.bandwidth)
 activedomain{T<:Union(KernelBartlett, KernelTriangular)}(kT::T) = UnitRange(-kT.bandwidth, kT.bandwidth)
 activedomain(kT::KernelGaussian) = UnitRange(-Inf, Inf)
+activedomain(kT::KernelParzen2009RK) = UnitRange(0, 1)
 activedomain(kT::KernelPR1993FlatTop) = UnitRange(-kT.M, kT.M)
 activedomain(kT::KernelP2003FlatTop) = UnitRange(-1, 1)
 activedomain(kT::KernelPP2002Trap) = UnitRange(0, 1)
@@ -240,6 +268,7 @@ end
 paramdomain(kT::KernelEpanechnikov, pNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
 paramdomain{T<:Union(KernelBartlett, KernelTriangular)}(kT::T, pNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
 paramdomain(kT::KernelGaussian, paramNum::Int) = pNum == 1 ? UnitRange(nextfloat(0.0), prevfloat(Inf)) : error("Invalid parameter number")
+paramdomain(kT::KernelParzen2009RK, pNum::Int) = error("Kernel function has no parameters")
 function paramdomain(kT::KernelPR1993FlatTop, paramNum::Int)
 	paramNum == 1 && return(UnitRange(nextfloat(0.0), Inf))
 	paramNum == 2 && return(UnitRange(nextfloat(0.0), Inf))
