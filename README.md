@@ -5,7 +5,7 @@ A module for the [Julia](http://julialang.org/) language for [kernel-function ba
 
 ## WARNING
 
-I made a major change to the way the module is structured today (2015-06-26) and have not gotten around to updating the docs yet. If you want to use this module in the mean-time you will need to examine the source yourself. I should get around to updating the docs in the next few weeks, although am considering holding off until Julia v0.4 arrives with its new documentation capabilities.
+This package is no longer maintained. I moved most of the useful functionality from this into my package DependentBootstrap.
 
 ## Main features
 
